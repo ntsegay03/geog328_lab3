@@ -30,8 +30,11 @@
     th {
       background: #f4f4f4;
     }
+    /* Ensure map container gets a real height so MapLibre can render into it */
     #map {
       flex: 1;
+      min-height: 100vh;
+      position: relative;
     }
     button {
       margin-top: 10px;
@@ -74,86 +77,104 @@
       zoom: 4.5
     });
 
+    // log map errors (helpful for remote tile/style CORS or tile errors)
+    map.on('error', (e) => console.error('Map error:', e));
+
     async function geojsonFetch() {
-      let response, earthquakes, japan, table;
-      response = await fetch('assets/earthquakes.geojson');
-      earthquakes = await response.json();
-      response = await fetch('assets/japan.json');
-      japan = await response.json();
+      try {
+        console.log('Fetching assets...');
+        // Use explicit relative paths (works if your site is served from a subpath)
+        const respEQ = await fetch('./assets/earthquakes.geojson');
+        if (!respEQ.ok) throw new Error('Failed to fetch earthquakes.geojson: ' + respEQ.status);
+        const earthquakes = await respEQ.json();
 
-      map.on('load', function loadingData() {
-        map.addSource('earthquakes', {
-          type: 'geojson',
-          data: earthquakes
-        });
+        const respJP = await fetch('./assets/japan.json');
+        if (!respJP.ok) throw new Error('Failed to fetch japan.json: ' + respJP.status);
+        const japan = await respJP.json();
 
-        map.addLayer({
-          'id': 'earthquakes-layer',
-          'type': 'circle',
-          'source': 'earthquakes',
-          'paint': {
-            'circle-radius': 8,
-            'circle-stroke-width': 2,
-            'circle-color': 'red',
-            'circle-stroke-color': 'white'
+        console.log('GeoJSON fetched, adding sources and layers...');
+        map.on('load', function loadingData() {
+          if (!map.getSource('earthquakes')) {
+            map.addSource('earthquakes', {
+              type: 'geojson',
+              data: earthquakes
+            });
+
+            map.addLayer({
+              id: 'earthquakes-layer',
+              type: 'circle',
+              source: 'earthquakes',
+              paint: {
+                // radius based on magnitude
+                'circle-radius': [
+                  'interpolate', ['linear'], ['get', 'mag'],
+                  0, 4,
+                  6, 12
+                ],
+                'circle-stroke-width': 1,
+                'circle-color': 'red',
+                'circle-stroke-color': 'white'
+              }
+            });
+          }
+
+          if (!map.getSource('japan')) {
+            map.addSource('japan', {
+              type: 'geojson',
+              data: japan
+            });
+
+            map.addLayer({
+              id: 'japan-layer',
+              type: 'fill',
+              source: 'japan',
+              paint: {
+                'fill-color': '#0080ff',
+                'fill-opacity': 0.5
+              }
+            });
           }
         });
 
-        map.addSource('japan', {
-          type: 'geojson',
-          data: japan
-        });
+        // Populate table (append to tbody)
+        const tbody = document.querySelector('#table-container table tbody');
+        tbody.innerHTML = ''; // clear
+        for (let i = 0; i < earthquakes.features.length; i++) {
+          const feat = earthquakes.features[i];
+          const tr = document.createElement('tr');
+          const td1 = document.createElement('td');
+          const td2 = document.createElement('td');
+          const td3 = document.createElement('td');
+          td1.textContent = feat.properties.id ?? '';
+          td2.textContent = feat.properties.mag ?? '';
+          td3.textContent = feat.properties.time ? new Date(feat.properties.time).toLocaleDateString('en-US') : '';
+          tr.appendChild(td1);
+          tr.appendChild(td2);
+          tr.appendChild(td3);
+          tbody.appendChild(tr);
+        }
 
-        map.addLayer({
-          'id': 'japan-layer',
-          'type': 'fill',
-          'source': 'japan',
-          'paint': {
-            'fill-color': '#0080ff',
-            'fill-opacity': 0.5
-          }
-        });
-      });
-
-      table = document.getElementsByTagName("table")[0];
-      let row, cell1, cell2, cell3;
-      for (let i = 0; i < earthquakes.features.length; i++) {
-        row = table.insertRow(-1);
-        cell1 = row.insertCell(0);
-        cell2 = row.insertCell(1);
-        cell3 = row.insertCell(2);
-        cell1.innerHTML = earthquakes.features[i].properties.id;
-        cell2.innerHTML = earthquakes.features[i].properties.mag;
-        cell3.innerHTML = new Date(earthquakes.features[i].properties.time).toLocaleDateString("en-US");
+        const btn = document.getElementsByTagName('button')[0];
+        btn.addEventListener('click', sortTable);
+        console.log('Setup complete.');
+      } catch (err) {
+        console.error('Error loading geojson or initializing map/table:', err);
       }
-
-      let btn = document.getElementsByTagName("button")[0];
-      btn.addEventListener('click', sortTable);
     }
 
     geojsonFetch();
 
-    function sortTable(e) {
-      let table, rows, switching, i, x, y, shouldSwitch;
-      table = document.getElementsByTagName("table")[0];
-      switching = true;
-      while (switching) {
-        switching = false;
-        rows = table.rows;
-        for (i = 1; i < (rows.length - 1); i++) {
-          shouldSwitch = false;
-          x = parseFloat(rows[i].getElementsByTagName("td")[1].innerHTML);
-          y = parseFloat(rows[i + 1].getElementsByTagName("td")[1].innerHTML);
-          if (x < y) {
-            shouldSwitch = true;
-            break;
-          }
-        }
-        if (shouldSwitch) {
-          rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-          switching = true;
-        }
-      }
+    function sortTable() {
+      const tbody = document.querySelector('#table-container table tbody');
+      // convert rows to array and sort by magnitude (descending)
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const aMag = parseFloat(a.cells[1].textContent) || 0;
+        const bMag = parseFloat(b.cells[1].textContent) || 0;
+        return bMag - aMag;
+      });
+      // re-append in sorted order
+      rows.forEach(r => tbody.appendChild(r));
     }
   </script>
 </body>
