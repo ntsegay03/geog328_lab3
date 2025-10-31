@@ -84,11 +84,11 @@
       try {
         console.log('Fetching assets...');
         // Use explicit relative paths (works if your site is served from a subpath)
-        const respEQ = await fetch('./assets/earthquakes.geojson');
+        const respEQ = await fetch('assets/earthquakes.geojson');
         if (!respEQ.ok) throw new Error('Failed to fetch earthquakes.geojson: ' + respEQ.status);
         const earthquakes = await respEQ.json();
 
-        const respJP = await fetch('./assets/japan.json');
+        const respJP = await fetch('assets/japan.json');
         if (!respJP.ok) throw new Error('Failed to fetch japan.json: ' + respJP.status);
         const japan = await respJP.json();
 
