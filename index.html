@@ -6,7 +6,7 @@
   <title>Earthquake Visualization (MapLibre)</title>
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
-    /* Make map fill the entire viewport */
+    /* Make map fill the entire sceen */
     html, body {
       height: 100%;
       margin: 0;
@@ -22,7 +22,7 @@
       z-index: 0;
     }
 
-    /* Floating side panel that hovers over the map on the right */
+    /* Floating side panel that hovers on the right */
     #table-container {
       position: absolute;
       top: 20px;
@@ -61,6 +61,11 @@
       font-weight: 600;
     }
 
+    /* Highlighted row when an earthquake is selected from the map */
+    tr.selected {
+      background: #ffeaa7;
+    }
+
     button {
       margin-top: 10px;
       padding: 8px 12px;
@@ -75,7 +80,7 @@
       background: #74b9ff;
     }
 
-    /* Hide the side panel on small viewports */
+    /* Hide the side panel on small screens */
     @media (max-width: 1024px) {
       #table-container {
         display: none;
@@ -110,13 +115,17 @@
       zoom: 4.5
     });
 
-    // log map errors (helpful for remote tile/style CORS or tile errors)
+    // log map errors 
     map.on('error', (e) => console.error('Map error:', e));
+
+    // map of row key -> table row element for quick lookup
+    const rowsByKey = new Map();
+    let currentlySelectedKey = null;
 
     async function geojsonFetch() {
       try {
         console.log('Fetching assets...');
-        // Use explicit relative paths (works if your site is served from a subpath)
+        // Use explicit relative paths 
         const respEQ = await fetch('assets/earthquakes.geojson');
         if (!respEQ.ok) throw new Error('Failed to fetch earthquakes.geojson: ' + respEQ.status);
         const earthquakes = await respEQ.json();
@@ -124,6 +133,15 @@
         const respJP = await fetch('assets/japan.json');
         if (!respJP.ok) throw new Error('Failed to fetch japan.json: ' + respJP.status);
         const japan = await respJP.json();
+
+        // Ensure each feature has a stable key we can use to link map features and table rows.
+        for (let i = 0; i < earthquakes.features.length; i++) {
+          const feat = earthquakes.features[i];
+          const key = String(feat.properties?.id ?? feat.properties?.code ?? feat.id ?? i);
+          // attach a custom property that will be present in the clicked feature
+          if (!feat.properties) feat.properties = {};
+          feat.properties._rowKey = key;
+        }
 
         console.log('GeoJSON fetched, adding sources and layers...');
         map.on('load', function loadingData() {
@@ -145,7 +163,7 @@
                   6, 12
                 ],
                 'circle-stroke-width': 1,
-                // color ramp by magnitude (different visual style than the Japan fill)
+                // color ramp by magnitude 
                 'circle-color': [
                   'interpolate',
                   ['linear'],
@@ -176,14 +194,35 @@
               }
             });
           }
+
+          // Add click handler for earthquake points that will highlight the matching row
+          map.on('click', 'earthquakes-layer', (e) => {
+            if (!e.features || !e.features.length) return;
+            const feat = e.features[0];
+            const key = feat.properties?._rowKey ?? String(feat.properties?.id ?? feat.id ?? '');
+            if (key) {
+              highlightRowByKey(key);
+            }
+          });
+
+          // change mouse cursor when hovering over earthquake points
+          map.on('mouseenter', 'earthquakes-layer', () => {
+            map.getCanvas().style.cursor = 'pointer';
+          });
+          map.on('mouseleave', 'earthquakes-layer', () => {
+            map.getCanvas().style.cursor = '';
+          });
         });
 
-        // Populate table (append to tbody)
+        // Populate table
         const tbody = document.querySelector('#table-container table tbody');
         tbody.innerHTML = ''; // clear
+        rowsByKey.clear();
         for (let i = 0; i < earthquakes.features.length; i++) {
           const feat = earthquakes.features[i];
+          const key = String(feat.properties._rowKey);
           const tr = document.createElement('tr');
+          tr.dataset.eqid = key;
           const td1 = document.createElement('td');
           const td2 = document.createElement('td');
           const td3 = document.createElement('td');
@@ -194,6 +233,22 @@
           tr.appendChild(td2);
           tr.appendChild(td3);
           tbody.appendChild(tr);
+
+          // store mapping key -> row
+          rowsByKey.set(key, tr);
+
+          // clicking a row to center the map on the earthquake
+          tr.addEventListener('click', () => {
+            // find the matching feature in the source and fly to it
+            const src = map.getSource('earthquakes');
+            if (src && src._data && src._data.features) {
+              const f = src._data.features.find(ff => String(ff.properties?._rowKey) === key);
+              if (f && f.geometry && f.geometry.coordinates) {
+                map.flyTo({ center: f.geometry.coordinates, zoom: Math.max(map.getZoom(), 6) });
+                highlightRowByKey(key);
+              }
+            }
+          });
         }
 
         const btn = document.getElementsByTagName('button')[0];
@@ -217,6 +272,29 @@
       });
       // re-append in sorted order
       rows.forEach(r => tbody.appendChild(r));
+    }
+
+    function highlightRowByKey(key) {
+      // clear previous selection
+      if (currentlySelectedKey && rowsByKey.has(currentlySelectedKey)) {
+        const prev = rowsByKey.get(currentlySelectedKey);
+        prev.classList.remove('selected');
+      }
+      currentlySelectedKey = key;
+      const row = rowsByKey.get(key);
+      if (row) {
+        row.classList.add('selected');
+        // scroll table container so row is visible
+        const container = document.getElementById('table-container');
+        if (container && window.getComputedStyle(container).display !== 'none') {
+          const rowRect = row.getBoundingClientRect();
+          const containerRect = container.getBoundingClientRect();
+          const offsetTop = rowRect.top - containerRect.top;
+          container.scrollTop += offsetTop - 40;
+        }
+      } else {
+        console.warn('No table row found for key', key);
+      }
     }
   </script>
 </body>
